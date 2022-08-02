@@ -121,7 +121,7 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
     #     return sum(model.R[i] for i in RSet_ex) >= -1
     # model.subcons = Constraint(rule=substrate_limit)
     opt_FBA = SolverFactory('gurobi')
-    # opt_FBA = SolverFactory('cplex')
+    # opt_FBA = SolverFactory('cplex_direct')
     try:
         results_FBA = opt_FBA.solve(model)#, tee=True)
         if results_FBA.solver.termination_condition == 'optimal':
@@ -183,74 +183,25 @@ def list_to_chunks(sample_list, chunk_size):
     result=lst(sample_list, chunk_size)
     return result
 
-def main():
-    """
-    Python code for generating synthetic data with specified size of model
-    Input arguements:
-    1.  -nexp (--n_exp): number of exps
-    2.  -p (--n_p): number of processors for multiprocessing
-    3.  -s (--scen): linear (1) or nonlinear (2) objective
-    4.  -f (--expand_f): expansion factor on numbers of random bounds. n_sample = n_exp*f
-    5.  -ms (--mod_con): read sbml file to generate model info or not, 0 = yes, 1 = no
-
-    Execute the code in terminal:
-    python synthetic_data.py -nexp 1000 -p 8 -ms 1
-    """
-    # Collect input for model parameter assignment.
-    parser = argparse.ArgumentParser(description='Runs parameter estimation to estimate Vmax in kinetic models (using exp data)')
-    optional = parser._action_groups.pop()  # creates group of optional arguments
-    required = parser.add_argument_group('required arguments')  # creates group of required arguments
-    # required input
-    
-    # optional input
-    optional.add_argument('-nexp', '--n_exp', help='number of exps', type=int, default = 1000)
-    optional.add_argument('-p', '--n_p', help='number of processors for multiprocessing', type=int, default = 8)
-    optional.add_argument('-s', '--scen', help='linear (1) or nonlinear (2) objective', type=int, default = 1)
-    optional.add_argument('-f', '--expand_f', help='expansion factor on numbers of random bounds. n_sample = n_exp*f', type=int, default = 100)
-    optional.add_argument('-ms', '--mod_con', help='read sbml file to generate model info or not, 0 = yes, 1 = no', type=int, default = 1)
-
-    parser._action_groups.append(optional)  # add optional values to the parser
-    args = parser.parse_args()  # get the arguments from the program input, set them to args
-    
-    # initialization
-    n_exp = args.n_exp
-    n_pool = args.n_p
-    scen = args.scen
-    expand_f = args.expand_f
-    sbml_model = 'iJR904.xml'
-    n_sample = int(n_exp*expand_f)
-
-    if args.mod_con == 0:
-        # extract model from sbml files
-        RSet, MetSet, UB_dict_WT, LB_dict_WT, S_dict = model_reconstruction(sbml_model)
-    else:
-        RSet, MetSet, UB_dict_WT, LB_dict_WT, S_dict = read_model()
-    # get the rxn list for the redox potential objective 
-    redox_rxn_tuple = get_redox_rxn_tuple(S_dict,RSet)
-
-    # generate input of ranmdom bounds for specified number of experiment
+def generate_feasible_set(RSet,MetSet, UB_dict_WT, LB_dict_WT, S_dict, redox_rxn_tuple,n_sample, c_Ref, n_pool, n_exp, scen = 1):
+    # generate feasoble sets of ranmdom bounds for specified number of experiment
     UB_rand, LB_rand = generate_random_bounds(RSet, UB_dict_WT, LB_dict_WT, numSam = n_sample)
-
-    # generate reference cost vector
-    np.random.seed(5) #10
-    c_Ref = np.random.uniform(low=0.1, high=10, size=6).tolist()
-    c_Ref[0] = 0.05
-
     # count computation time
     start = time.time()
-    print('Data generator starts:')
+    print('Start generating feasible sets:')
     # initialize df
     df_sol = pd.DataFrame()
     df_UB = pd.DataFrame()
     df_LB = pd.DataFrame()
-    chunk_size = int(n_pool*100)
+    chunk_size = int(n_pool*10)
     UB_rand = list_to_chunks(UB_rand,chunk_size)
     LB_rand = list_to_chunks(LB_rand,chunk_size)
     # generate synthetic data
     count = 0
     n_rxn = 1
     c_Ref = [float(i)/sum(c_Ref[0:n_rxn]) for i in c_Ref]
-    print('Generating data for objective with 1 hypothesis')
+    obj_rxns_lst = ['abs_norm','BIOMASS_Ecoli','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
+
     try:
         while len(df_sol) < n_exp:
             # parallel computing (multiprocessing)
@@ -299,12 +250,78 @@ def main():
         df_cref = pd.DataFrame(c_Ref[0:n_rxn])
         df_cref.to_excel(writer, sheet_name='C Ref')
         writer.save()
+        # report computation time
+    end = time.time()
+    print('Feasible sets creation finished in %d sec.' %(end-start))
+    
+def main():
+    """
+    Python code for generating synthetic data with specified size of model
+    Input arguements:
+    1.  -nexp (--n_exp): number of exps
+    2.  -p (--n_p): number of processors for multiprocessing
+    3.  -s (--scen): linear (1) or nonlinear (2) objective
+    4.  -f (--expand_f): expansion factor on numbers of random bounds. n_sample = n_exp*f
+    5.  -ms (--mod_con): read sbml file to generate model info or not, 0 = yes, 1 = no
 
-    UB_rand = df_UB.values.tolist()
-    LB_rand = df_LB.values.tolist()
+    Execute the code in terminal:
+    python synthetic_data.py -nexp 1000 -p 8 -ms 1
+    """
+    # Collect input for model parameter assignment.
+    parser = argparse.ArgumentParser(description='Runs parameter estimation to estimate Vmax in kinetic models (using exp data)')
+    optional = parser._action_groups.pop()  # creates group of optional arguments
+    required = parser.add_argument_group('required arguments')  # creates group of required arguments
+    # required input
+    
+    # optional input
+    optional.add_argument('-nexp', '--n_exp', help='number of exps', type=int, default = 1000)
+    optional.add_argument('-p', '--n_p', help='number of processors for multiprocessing', type=int, default = 8)
+    optional.add_argument('-s', '--scen', help='linear (1) or nonlinear (2) objective', type=int, default = 1)
+    optional.add_argument('-f', '--expand_f', help='expansion factor on numbers of random bounds. n_sample = n_exp*f', type=int, default = 100)
+    optional.add_argument('-ms', '--mod_con', help='read sbml file to generate model info or not, 0 = yes, 1 = no', type=int, default = 1)
+    optional.add_argument('-fg', '--FSet_gen', help='Generate feasible sets of bounds or not, 0 = yes, 1 = no', type=int, default = 1)
+
+    parser._action_groups.append(optional)  # add optional values to the parser
+    args = parser.parse_args()  # get the arguments from the program input, set them to args
+    
+    # initialization
+    n_exp = args.n_exp
+    n_pool = args.n_p
+    scen = args.scen
+    expand_f = args.expand_f
+    sbml_model = 'e_coli_core.xml'
+    n_sample = int(n_exp*expand_f)
+
+    if args.mod_con == 0:
+        # extract model from sbml files
+        RSet, MetSet, UB_dict_WT, LB_dict_WT, S_dict = model_reconstruction(sbml_model)
+    else:
+        RSet, MetSet, UB_dict_WT, LB_dict_WT, S_dict = read_model()
+    # get the rxn list for the redox potential objective 
+    redox_rxn_tuple = get_redox_rxn_tuple(S_dict,RSet)
+
+    # generate reference cost vector
+    np.random.seed(5) #10
+    c_Ref = np.random.uniform(low=0.1, high=10, size=6).tolist()
+    c_Ref[0] = 0.05
+
+    # generate feasible sets or not
+    if args.mod_con == 0:
+        generate_feasible_set(RSet,MetSet, UB_dict_WT, LB_dict_WT, S_dict, redox_rxn_tuple,n_sample, c_Ref, n_pool, n_exp, scen = 1)
+    
+    # count computation time
+    start = time.time()
+    print('Data generator starts:')
+    # define hypothesized objective list
+    obj_rxns_lst = ['abs_norm','BIOMASS_Ecoli','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
+    # read feasible sets of bounds
+    UB_exp_df = pd.read_excel('feasible_set.xlsx', sheet_name='upper bound',index_col = 0)
+    LB_exp_df = pd.read_excel('feasible_set.xlsx', sheet_name='lower bound',index_col = 0)
+    UB_rand = UB_exp_df[0:n_exp].values.tolist()
+    LB_rand = LB_exp_df[0:n_exp].values.tolist()
     n_exp = len(UB_rand)
     print('feasible set: %d' %n_exp)
-    for i in range(2,7):
+    for i in range(1,7):
         print('Generating data for objective with %d hypothesis' %i)
         n_rxn = i
         c_Ref = [float(i)/sum(c_Ref[0:n_rxn]) for i in c_Ref]
