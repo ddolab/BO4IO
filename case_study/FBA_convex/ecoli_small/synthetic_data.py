@@ -88,10 +88,12 @@ def get_redox_rxn_tuple(S_dict,RSet):
                 pass
     return redox_rxn_tuple
 
-def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 3, scen = 1, ind = 1):
+def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 3, scen = 1, ind = 1, solvername = 'gurobi'):
     """
     Create concreate Pyomo model for FBA
     """
+    # count computation time
+    start = time.time()
     # candidate reactions in objective functions (up to 5)
     obj_rxns_tup = [[(-1,'BIOMASS_Ecoli_core_w_GAM')], [(-1,'ATPM')], [(-1,'EX_glc__D_e')], [(-1,'EX_etoh_e')], redox_rxn_tuple]
     obj_rxns_lst = ['l2_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
@@ -123,11 +125,11 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
     # def substrate_limit(model):
     #     return sum(model.R[i] for i in RSet_ex) >= -1
     # model.subcons = Constraint(rule=substrate_limit)
-    # opt_FBA = SolverFactory('gurobi')
-    opt_FBA = SolverFactory('ipopt')
-    # opt_FBA = SolverFactory('cplex_direct')
+    opt_FBA = SolverFactory(solvername)
+    ti = time.time()-start
     try:
         results_FBA = opt_FBA.solve(model)#, tee=True)
+        ts = time.time()-start-ti
         if results_FBA.solver.termination_condition == 'optimal':
             solutionList = []
             solutionList.append(0) # terminal status, 0: optimal, 1: other
@@ -151,7 +153,9 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
             solutionList = [1]
     except Exception as e: 
         print(e)
-    return solutionList, UB_rand, LB_rand
+    tp = time.time()-start-ti-ts
+    # ttol = time.time()-start
+    return solutionList, UB_rand, LB_rand, ti, ts, tp#, ttol
 
 def generate_random_bounds(RSet, UB_dict_WT, LB_dict_WT, numSam = 10):
     # LB_dict_WT['BIOMASS_Ecoli_core_w_GAM'] = 0.005
@@ -211,7 +215,8 @@ def generate_feasible_set(RSet,MetSet, UB_dict_WT, LB_dict_WT, S_dict, redox_rxn
             # parallel computing (multiprocessing)
             p = mp.Pool(n_pool)
             batch_size = math.ceil(chunk_size/n_pool)
-            results = p.starmap(FBA, [(RSet, MetSet, UB_rand[count][i], LB_rand[count][i], S_dict, redox_rxn_tuple, c_Ref,n_rxn, scen) for i in range(chunk_size)],batch_size)
+            solvername = 'ipopt'
+            results = p.starmap(FBA, [(RSet, MetSet, UB_rand[count][i], LB_rand[count][i], S_dict, redox_rxn_tuple, c_Ref,n_rxn, scen,1,solvername) for i in range(chunk_size)],batch_size)
             p.close()
             p.join()
 

@@ -30,7 +30,8 @@ def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_r
     p = mp.Pool(n_pool)
     batch_size = math.ceil(n_exp/n_pool)
     scen = 1
-    results = p.starmap(FBA, [(RSet, MetSet, UB_exp[i], LB_exp[i], S_dict, redox_rxn_tuple, c_vector, n_rxn, scen) for i in range(n_exp)],batch_size)
+    solvername = 'ipopt'
+    results = p.starmap(FBA, [(RSet, MetSet, UB_exp[i], LB_exp[i], S_dict, redox_rxn_tuple, c_vector, n_rxn, scen,1, solvername) for i in range(n_exp)],batch_size)
     p.close()
     p.join()
 
@@ -45,6 +46,10 @@ def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_r
     sol_exp = df_sol.to_numpy()
     loss = (sol_exp_ref - sol_exp)
     loss = np.multiply(loss,loss).sum()/n_exp
+    print("Average initialization time: %.6fs" %(sum([r[3] for r in results])/n_exp))
+    print("Average solving time: %.6fs" %(sum([r[4] for r in results])/n_exp))
+    print("Average PostCal time: %.6fs" %(sum([r[5] for r in results])/n_exp))
+
     return loss
 def main():
     """
@@ -85,7 +90,7 @@ def main():
     if len(c_vector) != n_rxn:
         print('Error: length of c vector is not equal to -nrxn!')
 
-    print('Initialization starts:')
+    print('Initialization')
     # read exp data
     UB_exp, LB_exp, sol_exp_df, C_Ref = get_exp_input(n_exp=n_exp,n_rxn=n_rxn)
     get_exp_input_results = {'UB_exp':UB_exp, 'LB_exp':LB_exp, 'sol_exp_df':sol_exp_df, 'C_Ref':C_Ref}
@@ -93,13 +98,13 @@ def main():
     RSet, MetSet, UB_dict, LB_dict, S_dict = read_model()
     read_model_results = {'RSet':RSet, 'MetSet':MetSet, 'UB_dict_WT':UB_dict, 'LB_dict_WT':LB_dict, 'S_dict':S_dict}
     # count computation time
-    print('Simulator starts:')
+    print('Simulator starts')
     start = time.time()
     loss = simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_results)
     with open('loss.txt', 'w') as f:
         f.write('current loss: %.10f' %loss)
     end = time.time()
-    print('Simulator finished in %d sec.' %(end-start))
+    print('Simulator finished in %.6fs' %(end-start))
 
     print('current loss: %.10f' %loss)
 
