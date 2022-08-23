@@ -94,7 +94,7 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
     """
     # candidate reactions in objective functions (up to 5)
     obj_rxns_tup = [[(-1,'BIOMASS_Ecoli_core_w_GAM')], [(-1,'ATPM')], [(-1,'EX_glc__D_e')], [(-1,'EX_etoh_e')], redox_rxn_tuple]
-    obj_rxns_lst = ['abs_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
+    obj_rxns_lst = ['l2_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
     model = ConcreteModel()
     model.r = Set(initialize=RSet)
     model.m = Set(initialize=MetSet)
@@ -104,14 +104,17 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
         return (LB_dict[i], UB_dict[i])
     model.R = Var(model.r, domain = Reals, bounds=Rb)
     model.S = Param(model.m, model.r, initialize = S_dict)
-    model.U = Var(model.r, domain = NonNegativeReals)
-    def abs_cons_UB_rule(model,i):
-        return model.R[i] <= model.U[i]
-    def abs_cons_LB_rule(model,i):
-        return -model.R[i] <= model.U[i]
-    model.abscons_UB = Constraint(model.r, rule=abs_cons_UB_rule)
-    model.abscons_LB = Constraint(model.r, rule=abs_cons_LB_rule)
-    model.obj_FBA = Objective(expr=c_ref[0]*sum(model.U[i] for i in RSet)/len(RSet)+sum(c_ref[i]*obj_rxns_tup[i-1][j][0]*model.R[obj_rxns_tup[i-1][j][1]] for i in range(1,n_rxn) for j in range(len(obj_rxns_tup[i-1])) ), sense=minimize)
+    # variables and constrains for abs (l1) norm
+    # model.U = Var(model.r, domain = NonNegativeReals)
+    # def abs_cons_UB_rule(model,i):
+    #     return model.R[i] <= model.U[i]
+    # def abs_cons_LB_rule(model,i):
+    #     return -model.R[i] <= model.U[i]
+    # model.abscons_UB = Constraint(model.r, rule=abs_cons_UB_rule)
+    # model.abscons_LB = Constraint(model.r, rule=abs_cons_LB_rule)
+    # model.obj_FBA = Objective(expr=c_ref[0]*sum(model.U[i] for i in RSet)/len(RSet)+sum(c_ref[i]*obj_rxns_tup[i-1][j][0]*model.R[obj_rxns_tup[i-1][j][1]] for i in range(1,n_rxn) for j in range(len(obj_rxns_tup[i-1])) ), sense=minimize)
+    model.obj_FBA = Objective(expr=c_ref[0]*sum(model.R[i]**2 for i in RSet)/len(RSet)+sum(c_ref[i]*obj_rxns_tup[i-1][j][0]*model.R[obj_rxns_tup[i-1][j][1]] for i in range(1,n_rxn) for j in range(len(obj_rxns_tup[i-1])) ), sense=minimize)
+    
     def mb(model, i):
         return sum(model.S[(i,j)]*model.R[j] for j in RSet) == 0
     model.mbcons = Constraint(model.m, rule=mb)
@@ -120,7 +123,8 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
     # def substrate_limit(model):
     #     return sum(model.R[i] for i in RSet_ex) >= -1
     # model.subcons = Constraint(rule=substrate_limit)
-    opt_FBA = SolverFactory('gurobi')
+    # opt_FBA = SolverFactory('gurobi')
+    opt_FBA = SolverFactory('ipopt')
     # opt_FBA = SolverFactory('cplex_direct')
     try:
         results_FBA = opt_FBA.solve(model)#, tee=True)
@@ -128,7 +132,7 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
             solutionList = []
             solutionList.append(0) # terminal status, 0: optimal, 1: other
             solutionList.append(value(model.obj_FBA))
-            solutionList.append(sum(value(model.U[i]) for i in RSet)/len(RSet))
+            solutionList.append(sum(value(model.R[i])**2 for i in RSet)/len(RSet))
             for i in range(1,n_rxn):
                     solutionList.append(sum(value(model.R[obj_rxns_tup[i-1][j][1]]) for j in range(len(obj_rxns_tup[i-1]))))
             for k in RSet:
@@ -139,7 +143,7 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
                 # print(R_sol_WT)
                 print("=========== Optimal Biomass fluxes ===========")
                 print(value(model.obj_FBA), '\n')
-                print("%s: %.3f \n"%('abs_norm', sum(value(model.U[i]) for i in RSet)/len(RSet)))
+                print("%s: %.3f \n"%('l2_norm', sum(value(model.R[i])**2 for i in RSet)/len(RSet)))
                 for i in range(1,n_rxn):
                     print("%s: %.3f \n"%(obj_rxns_lst[i], sum(value(model.R[obj_rxns_tup[i-1][j][1]]) for j in range(len(obj_rxns_tup[i-1])))))
             
@@ -200,7 +204,7 @@ def generate_feasible_set(RSet,MetSet, UB_dict_WT, LB_dict_WT, S_dict, redox_rxn
     count = 0
     n_rxn = 1
     c_Ref = [float(i)/sum(c_Ref[0:n_rxn]) for i in c_Ref]
-    obj_rxns_lst = ['abs_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
+    obj_rxns_lst = ['l2_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
 
     try:
         while len(df_sol) < n_exp:
@@ -217,7 +221,7 @@ def generate_feasible_set(RSet,MetSet, UB_dict_WT, LB_dict_WT, S_dict, redox_rxn
             LB_rand_List = [r[2] for r in results]
 
             # store solutions and fesible bounds into df
-            obj_rxns_lst = ['abs_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
+            obj_rxns_lst = ['l2_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
             column_name = ['status', 'obj_val'] + [obj_rxns_lst[i] for i in range(n_rxn)] + RSet 
             df_sol_tmp = pd.DataFrame(solution, columns = column_name)
             df_UB_tmp = pd.DataFrame(UB_rand_List, columns = RSet)
@@ -313,7 +317,7 @@ def main():
     start = time.time()
     print('Data generator starts:')
     # define hypothesized objective list
-    obj_rxns_lst = ['abs_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
+    obj_rxns_lst = ['l2_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
     # read feasible sets of bounds
     UB_exp_df = pd.read_excel('feasible_set.xlsx', sheet_name='upper bound',index_col = 0)
     LB_exp_df = pd.read_excel('feasible_set.xlsx', sheet_name='lower bound',index_col = 0)

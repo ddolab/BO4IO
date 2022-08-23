@@ -10,9 +10,21 @@ def get_exp_input(n_exp,n_rxn):
     C_Ref = C_Ref_df.values.tolist()
     C_Ref = [item for sublist in C_Ref for item in sublist]
     return UB_exp, LB_exp, sol_exp_df, C_Ref
-def simulator(c_vector, n_exp,n_rxn, n_pool):
-    UB_exp, LB_exp, sol_exp_df, C_Ref = get_exp_input(n_exp,n_rxn)
-    RSet, MetSet, UB_dict_WT, LB_dict_WT, S_dict = read_model()
+
+def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_results):
+    # UB_exp, LB_exp, sol_exp_df, C_Ref = get_exp_input(n_exp,n_rxn)
+    # RSet, MetSet, UB_dict_WT, LB_dict_WT, S_dict = read_model()
+    # extract information from get_exp_input
+    UB_exp = get_exp_input_results['UB_exp']
+    LB_exp = get_exp_input_results['LB_exp']
+    sol_exp_df = get_exp_input_results['sol_exp_df']
+    C_Ref = get_exp_input_results['C_Ref']
+    # extract information from read_model
+    RSet = read_model_results['RSet']
+    MetSet = read_model_results['MetSet']
+    UB_dict_WT = read_model_results['UB_dict_WT']
+    LB_dict_WT = read_model_results['LB_dict_WT']
+    S_dict = read_model_results['S_dict']
     # get the rxn list for the redox potential objective 
     redox_rxn_tuple = get_redox_rxn_tuple(S_dict,RSet)
     p = mp.Pool(n_pool)
@@ -25,7 +37,7 @@ def simulator(c_vector, n_exp,n_rxn, n_pool):
     # get solutions and bounds for fluxes of exps that are optimal
     solution = [r[0] for r in results]
     # store solutions and fesible bounds into df
-    obj_rxns_lst = ['abs_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
+    obj_rxns_lst = ['l2_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
     column_name = ['status', 'obj_val'] + [obj_rxns_lst[i] for i in range(n_rxn)] + RSet
     df_sol = pd.DataFrame(solution, columns = column_name)
     df_sol = df_sol.iloc[:,n_rxn+2:]
@@ -73,10 +85,17 @@ def main():
     if len(c_vector) != n_rxn:
         print('Error: length of c vector is not equal to -nrxn!')
 
-    print('Simulator starts:')
+    print('Initialization starts:')
+    # read exp data
+    UB_exp, LB_exp, sol_exp_df, C_Ref = get_exp_input(n_exp=n_exp,n_rxn=n_rxn)
+    get_exp_input_results = {'UB_exp':UB_exp, 'LB_exp':LB_exp, 'sol_exp_df':sol_exp_df, 'C_Ref':C_Ref}
+    # read model info
+    RSet, MetSet, UB_dict, LB_dict, S_dict = read_model()
+    read_model_results = {'RSet':RSet, 'MetSet':MetSet, 'UB_dict_WT':UB_dict, 'LB_dict_WT':LB_dict, 'S_dict':S_dict}
     # count computation time
+    print('Simulator starts:')
     start = time.time()
-    loss = simulator(c_vector, n_exp,n_rxn, n_pool)
+    loss = simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_results)
     with open('loss.txt', 'w') as f:
         f.write('current loss: %.10f' %loss)
     end = time.time()
