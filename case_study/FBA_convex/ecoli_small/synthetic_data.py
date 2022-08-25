@@ -89,7 +89,7 @@ def get_redox_rxn_tuple(S_dict,RSet):
                 pass
     return redox_rxn_tuple
 
-def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 3, scen = 1, ind = 1, solvername = 'gurobi'):
+def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 3, scen = 1, ind = 1, solvername = 'ipopt'):
     """
     Create concreate Pyomo model for FBA
     """
