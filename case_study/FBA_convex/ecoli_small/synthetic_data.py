@@ -11,6 +11,7 @@ import numpy.random as npr
 from pyDOE2 import *
 import math
 import multiprocessing as mp
+# import multiprocess as mp
 import time
 import argparse
 import logging
@@ -104,8 +105,8 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
     LB_dict = dict(zip(RSet,LB_rand))
     def Rb(model, i):
         return (LB_dict[i], UB_dict[i])
-    model.R = Var(model.r, domain = Reals, bounds=Rb)
-    model.S = Param(model.m, model.r, initialize = S_dict)
+    model.R = Var(model.r, domain = Reals, bounds=Rb) 
+    model.S = Param(model.m, model.r, initialize = S_dict) #takes time
     # variables and constrains for abs (l1) norm
     # model.U = Var(model.r, domain = NonNegativeReals)
     # def abs_cons_UB_rule(model,i):
@@ -116,20 +117,20 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
     # model.abscons_LB = Constraint(model.r, rule=abs_cons_LB_rule)
     # model.obj_FBA = Objective(expr=c_ref[0]*sum(model.U[i] for i in RSet)/len(RSet)+sum(c_ref[i]*obj_rxns_tup[i-1][j][0]*model.R[obj_rxns_tup[i-1][j][1]] for i in range(1,n_rxn) for j in range(len(obj_rxns_tup[i-1])) ), sense=minimize)
     model.obj_FBA = Objective(expr=c_ref[0]*sum(model.R[i]**2 for i in RSet)/len(RSet)+sum(c_ref[i]*obj_rxns_tup[i-1][j][0]*model.R[obj_rxns_tup[i-1][j][1]] for i in range(1,n_rxn) for j in range(len(obj_rxns_tup[i-1])) ), sense=minimize)
-    
     def mb(model, i):
         return sum(model.S[(i,j)]*model.R[j] for j in RSet) == 0
-    model.mbcons = Constraint(model.m, rule=mb)
+    model.mbcons = Constraint(model.m, rule=mb) #takes time
+    ti1 = time.time()-start
     # RSet_ex = ['EX_etoh_e','EX_for_e','EX_fru_e','EX_fum_e','EX_glc__D_e','EX_gln__L_e','EX_glu__L_e',
     # 'EX_lac__D_e','EX_pyr_e','EX_succ_e']
     # def substrate_limit(model):
     #     return sum(model.R[i] for i in RSet_ex) >= -1
     # model.subcons = Constraint(rule=substrate_limit)
     opt_FBA = SolverFactory(solvername)
-    ti = time.time()-start
+    ti2 = time.time()-start - ti1
     try:
         results_FBA = opt_FBA.solve(model)#, tee=True)
-        ts = time.time()-start-ti
+        ts = time.time()-start-ti1 - ti2
         if results_FBA.solver.termination_condition == 'optimal':
             solutionList = []
             solutionList.append(0) # terminal status, 0: optimal, 1: other
@@ -153,9 +154,9 @@ def FBA(RSet, MetSet, UB_rand, LB_rand, S_dict, redox_rxn_tuple, c_ref, n_rxn = 
             solutionList = [1]
     except Exception as e: 
         print(e)
-    tp = time.time()-start-ti-ts
+    tp = time.time()-start-ti1 - ti2-ts
     # ttol = time.time()-start
-    return solutionList, UB_rand, LB_rand, ti, ts, tp#, ttol
+    return solutionList, UB_rand, LB_rand, ti1,ti2, ts, tp#, ttol
 
 def generate_random_bounds(RSet, UB_dict_WT, LB_dict_WT, numSam = 10):
     # LB_dict_WT['BIOMASS_Ecoli_core_w_GAM'] = 0.005

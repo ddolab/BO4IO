@@ -1,4 +1,5 @@
 from synthetic_data import *
+from FBA_model import *
 def get_exp_input(n_exp,n_rxn):
     UB_exp_df = pd.read_excel('synthetic_data_%d.xlsx' %n_rxn, sheet_name='upper bound',index_col = 0)
     LB_exp_df = pd.read_excel('synthetic_data_%d.xlsx' %n_rxn, sheet_name='lower bound',index_col = 0)
@@ -11,9 +12,43 @@ def get_exp_input(n_exp,n_rxn):
     C_Ref = [item for sublist in C_Ref for item in sublist]
     return UB_exp, LB_exp, sol_exp_df, C_Ref
 
-def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_results):
-    # UB_exp, LB_exp, sol_exp_df, C_Ref = get_exp_input(n_exp,n_rxn)
-    # RSet, MetSet, UB_dict_WT, LB_dict_WT, S_dict = read_model()
+def mFBA_solve(m, UB_rand, LB_rand, n_rxn, c_vector,solvername):
+    start = time.time()
+    # update the number of hypothesis functions
+    m.nrxn = n_rxn
+    # update c_vector
+    for i in range(len(c_vector)):
+        m.C[obj_rxns_lst[i]] = c_vector[i]
+    # update bounds
+    UB_dict = dict(zip(RSet,UB_rand))
+    LB_dict = dict(zip(RSet,LB_rand))
+    for i in RSet:
+        m.R[i].setlb(LB_dict[i])
+        m.R[i].setub(UB_dict[i])
+    ti1 = time.time()-start
+    opt_FBA = SolverFactory(solvername)
+    ti2 = time.time()-start - ti1
+    try:
+        results_FBA = opt_FBA.solve(m)#, tee=True)
+        ts = time.time()-start-ti1 - ti2
+        if results_FBA.solver.termination_condition == 'optimal':
+            solutionList = []
+            solutionList.append(0) # terminal status, 0: optimal, 1: other
+            solutionList.append(value(m.obj_FBA))
+            solutionList.append(sum(value(m.R[i])**2 for i in RSet)/len(RSet))
+            for i in range(1,n_rxn):
+                    solutionList.append(sum(value(m.R[obj_rxns_tup[i-1][j][1]]) for j in range(len(obj_rxns_tup[i-1]))))
+            for k in RSet:
+                solutionList.append(value(m.R[k]))
+        else:
+            solutionList = [1]
+    except Exception as e: 
+        print(e)
+    tp = time.time()-start-ti1 - ti2-ts
+    return solutionList, UB_rand, LB_rand, ti1, ti2, ts, tp
+
+
+def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_results, solvername = 'ipopt'):
     # extract information from get_exp_input
     UB_exp = get_exp_input_results['UB_exp']
     LB_exp = get_exp_input_results['LB_exp']
@@ -25,20 +60,17 @@ def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_r
     UB_dict_WT = read_model_results['UB_dict_WT']
     LB_dict_WT = read_model_results['LB_dict_WT']
     S_dict = read_model_results['S_dict']
+    
     # get the rxn list for the redox potential objective 
-    redox_rxn_tuple = get_redox_rxn_tuple(S_dict,RSet)
     p = mp.Pool(n_pool)
     batch_size = math.ceil(n_exp/n_pool)
-    scen = 1
-    solvername = 'ipopt'
-    results = p.starmap(FBA, [(RSet, MetSet, UB_exp[i], LB_exp[i], S_dict, redox_rxn_tuple, c_vector, n_rxn, scen,1, solvername) for i in range(n_exp)],batch_size)
+    results = p.starmap(mFBA_solve, [(mFBA, UB_exp[i], LB_exp[i], n_rxn, c_vector,solvername) for i in range(n_exp)],batch_size) 
     p.close()
     p.join()
 
     # get solutions and bounds for fluxes of exps that are optimal
     solution = [r[0] for r in results]
     # store solutions and fesible bounds into df
-    obj_rxns_lst = ['l2_norm','BIOMASS_Ecoli_core_w_GAM','ATPM','EX_glc__D_e','EX_etoh_e','REDOX POTENTIAL']
     column_name = ['status', 'obj_val'] + [obj_rxns_lst[i] for i in range(n_rxn)] + RSet
     df_sol = pd.DataFrame(solution, columns = column_name)
     df_sol = df_sol.iloc[:,n_rxn+2:]
@@ -46,10 +78,10 @@ def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_r
     sol_exp = df_sol.to_numpy()
     loss = (sol_exp_ref - sol_exp)
     loss = np.multiply(loss,loss).sum()/n_exp
-    print("Average initialization time: %.6fs" %(sum([r[3] for r in results])/n_exp))
-    print("Average solving time: %.6fs" %(sum([r[4] for r in results])/n_exp))
-    print("Average PostCal time: %.6fs" %(sum([r[5] for r in results])/n_exp))
-
+    print("Average initialization 1 time: %.6fs" %(sum([r[3] for r in results])/n_exp))
+    print("Average initialization 2 time: %.6fs" %(sum([r[4] for r in results])/n_exp))
+    print("Average solving time: %.6fs" %(sum([r[5] for r in results])/n_exp))
+    print("Average PostCal time: %.6fs" %(sum([r[6] for r in results])/n_exp))
     return loss
 def main():
     """
