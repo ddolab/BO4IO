@@ -48,7 +48,7 @@ def mFBA_solve(m, UB_rand, LB_rand, n_rxn, c_vector,solvername):
     return solutionList, UB_rand, LB_rand, ti1, ti2, ts, tp
 
 
-def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_results, solvername = 'ipopt'):
+def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_results, solvername = 'ipopt', ind = 0):
     # extract information from get_exp_input
     UB_exp = get_exp_input_results['UB_exp']
     LB_exp = get_exp_input_results['LB_exp']
@@ -78,10 +78,11 @@ def simulator(c_vector, n_exp,n_rxn, n_pool, get_exp_input_results, read_model_r
     sol_exp = df_sol.to_numpy()
     loss = (sol_exp_ref - sol_exp)
     loss = np.multiply(loss,loss).sum()/n_exp
-    print("Average initialization 1 time: %.6fs" %(sum([r[3] for r in results])/n_exp))
-    print("Average initialization 2 time: %.6fs" %(sum([r[4] for r in results])/n_exp))
-    print("Average solving time: %.6fs" %(sum([r[5] for r in results])/n_exp))
-    print("Average PostCal time: %.6fs" %(sum([r[6] for r in results])/n_exp))
+    if ind == 1:
+        print("Average initialization 1 time: %.6fs" %(sum([r[3] for r in results])/n_exp))
+        print("Average initialization 2 time: %.6fs" %(sum([r[4] for r in results])/n_exp))
+        print("Average solving time: %.6fs" %(sum([r[5] for r in results])/n_exp))
+        print("Average PostCal time: %.6fs" %(sum([r[6] for r in results])/n_exp))
     return loss
 def main():
     """
