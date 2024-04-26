@@ -1,4 +1,4 @@
-from BO4IO_Std_Pooling import *
+from BO4IO_Gen_Pooling import *
 from botorch.models.model import Model
 from botorch.acquisition.analytic import AnalyticAcquisitionFunction
 from botorch.utils.transforms import t_batch_mode_transform
@@ -160,8 +160,8 @@ def ProfileLikelihoodApproximation(model, bounds, theta_best, l_best, ntheta, al
     """
     # initialize sampled theta range (ratio)
     theta_range = 0.1 # percentage of perturbation from the theta_k^star
-    n_PL = 500 # number of the PL point sampled
-    step_size = 0.5/n_PL
+    n_PL = 400 # number of the PL point sampled
+    step_size = 0.4/n_PL
     
     
     st = time.time()
@@ -220,9 +220,9 @@ def ProfileLikelihoodApproximation(model, bounds, theta_best, l_best, ntheta, al
 
         # define sampling range
         if all_range:
-            # full range [0.0,0.5]
-            PL_LB = 0.5
-            PL_UB = 1.0
+            # full range [0.2,0.6]
+            PL_LB = 0.2
+            PL_UB = 0.6
         else:
             # range with specified ratio [theta_star*(1-theta_range), theta_star*(1+theta_range)]
             PL_LB = theta_k*(1-theta_range)
@@ -327,9 +327,9 @@ def ProfileLikelihoodApproximation(model, bounds, theta_best, l_best, ntheta, al
 
         # define sampling range
         if all_range:
-            # full range [0.0,0.5]
-            PL_LB = 0.5
-            PL_UB = 1.0
+            # full range [0.2,0.6]
+            PL_LB = 0.2
+            PL_UB = 0.6
         else:
             # range with specified ratio [theta_star*(1-theta_range), theta_star*(1+theta_range)]
             PL_LB = theta_k*(1-theta_range)
@@ -427,7 +427,7 @@ def main():
     """
     Wrapper code to compute profile likelihood
     Execute the code in terminal:
-    python BO4IO_PostPL.py -nexp 50 -niter 100 -case_study haverly1 -ntrial 5 -sigma 0.05 -theta_seed 1 -n_data_seed 1 -mp 1 -n_p 10 -ntheta 2
+    python BO4IO_PostPL.py -nexp 50 -niter 200 -case_study Lee -ntrial 5 -sigma 0.05 -theta_seed 1 -n_data_seed 1 -mp 1 -n_p 10
     """
     # Collect input for model parameter assignment.
     parser = argparse.ArgumentParser(description='Wrapper code to compute profile likelihood')
@@ -469,7 +469,6 @@ def main():
     nu = args.nu
     n_data_seed = args.n_data_seed
     theta_seed = args.theta_seed
-    ntheta = args.ntheta
     
     if args.mp == 1:
         mp_ind = True
@@ -490,38 +489,19 @@ def main():
         os.mkdir("BO_results/case_study=%s"%case_study)
     except:
         pass
-
-    try:
-        os.mkdir("BO_results/case_study=%s/ntheta=%s"%(case_study, ntheta))
-    except:
-        pass
-
-
-
     # dimension of output streams
-    n_dim = J[case_study]
-    if n_dim < ntheta:
-        print("The dimension of estimated theta (%s) is larger than the original problem (%s). Reduce the dimension."%(ntheta,n_dim))
-        sys.exit()
-
-    # generate the selected indexes of the theta vector
-    theta_ind_lst = list(range(n_dim))
-    random.seed(theta_seed)
-    selected_ind = random.sample(theta_ind_lst,ntheta)
-
-    st = time.time()
+    n_dim = J
     # store information for PL at specified iterations
     PL_iter_lst = [10,25,50,100,150,200]#,500]
 
-    # for data_seed in range(1,n_data_seed+1):#range(1,n_data_seed+1):
     for data_seed in range(theta_seed,theta_seed+n_data_seed):#range(1,n_data_seed+1):
         theta_seed = data_seed
-        print("================== BO4IO-standard pooling PL starts=====================")
+        print("================== BO4IO-generalized pooling PL starts=====================")
         print(f"case study {case_study}")
         print(f"sigma = {sigma}")
         print(f"n_exp = {n_exp}")
         print(f"seed = {theta_seed}")
-        print(f"ntheta = {ntheta}")
+        print(f"ntheta = {n_dim}")
         print(f"N_iter = {N_iter}")
         print(f"N_init = {N_init}")
         print(f"N_trial = {N_trial}")
@@ -529,40 +509,29 @@ def main():
         
         
         
-        Base_path = 'BO_results/case_study=%s/ntheta=%s/case_study=%s_BO_N_trial=' %(case_study,ntheta,case_study) + \
+        Base_path = 'BO_results/case_study=%s/case_study=%s_BO_N_trial=' %(case_study,case_study) + \
           str(N_trial) + '_N_init=' + str(N_init) + '_N_iter=' +\
-              str(N_iter) + '_n_exp=' + str(n_exp) + '_ntheta=' + \
-                str(ntheta) + '_sigma=' + str(sigma) + \
+              str(N_iter) + '_n_exp=' + str(n_exp) + \
+               '_sigma=' + str(sigma) + \
                     '_nu=%s_beta=%s_theta_seed=%s_data_seed=%s' %(nu,beta,theta_seed,data_seed)
         try:
             os.mkdir(Base_path)
         except:
             pass
         # synthetic data filename
-        filename = 'synthetic_data/%s_550_experiments_theta_seed=%s_data_seed=%s.xlsx'%(case_study,theta_seed, data_seed)
+        filename = 'synthetic_data/Lee_550_experiments_data_seed=%s_theta_seed=%s.xlsx'%(data_seed,theta_seed)
 
         # recreate instances from synthetic data
         # training instances
-        model_lst, actual_demand, theta_UB_vector, theta_LB_vector = recreate_instances(n_exp, sigma, filename, theta_seed)
+        model_lst, theta_vector,theta_UB, theta_LB = recreate_instances(n_exp, sigma, filename,data_seed)
+        print("True theta vector = ", theta_vector)
         # testing instances
-        model_lst_test, actual_demand_test, theta_UB_vector, theta_LB_vector = recreate_instances(n_test, sigma, filename, theta_seed, test_ind=True)
-        theta_true_full = theta_UB_vector #+ theta_UB_vector
-
-
-        
-
-
-        print("True theta vector = ", theta_true_full)
-
-        theta_true = [theta_true_full[i] for i in selected_ind]
-        print("True theta vector (selected) = ", theta_true)
+        model_lst_test, theta_vector,theta_UB_test, theta_LB_test = recreate_instances(n_test, sigma, filename,data_seed, test_ind=True)
+        theta_true = theta_vector
 
         # define ground true training loss
         st = time.time()
-        print(len(actual_demand))
-        neg_loss_true, _ = f_max(model_lst, theta_true, actual_demand, ntheta, selected_ind, mp_ind = mp_ind, n_p = n_p)
-        print(_)
-        # print(theta_true,theta_test)
+        neg_loss_true, _ = f_max(model_lst, theta_true, n_dim, mp_ind = mp_ind, n_p = n_p)
         et = time.time()
         total_time = et - st
         print(f"The negative training loss value given the true parameters is {neg_loss_true}")
@@ -570,22 +539,20 @@ def main():
 
         # define ground true testing loss
         st = time.time()
-        neg_loss_true_test, _ = f_max(model_lst_test, theta_true, actual_demand_test, ntheta, selected_ind, mp_ind = mp_ind, n_p = np_test)
-        print(_)
-
+        neg_loss_true_test, _ = f_max(model_lst_test, theta_true, n_dim, mp_ind = mp_ind, n_p = n_p)
         et = time.time()
         total_time = et - st
         print(f"The negative testing loss value given the true parameters is {neg_loss_true_test}")
         print(f"The CPU time needed to evaluate the testing loss was {total_time}")
 
         # Define bounds of the estimated parameters (theta)
-        nx = ntheta
-        xL = numpy.array([0.5]*int(nx))# + [0.7]*int(nx/2))
-        xU = numpy.array([1.0]*int(nx))# + [1.0]*int(nx/2))
+        nx = n_dim
+        xL = numpy.array([0.2]*int(nx))# + [0.7]*int(nx/2))
+        xU = numpy.array([0.6]*int(nx))# + [1.0]*int(nx/2))
         bounds = torch.tensor([(xL[j], xU[j]) for j in range(nx)]).T
 
         # list of the BO iterations that need the PL analysis
-        PL_iter_lst = [100]
+        PL_iter_lst = [10,25,50,100,150,200]
 
         # read BO results
         df_BO = pd.read_csv(Base_path + "/BO_results.csv")

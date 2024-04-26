@@ -5,6 +5,7 @@ import numpy
 import pandas as pd
 import warnings
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
+import gurobipy as gp
 import time
 import botorch
 import gpytorch
@@ -17,24 +18,20 @@ from botorch import fit_gpytorch_model
 from botorch.acquisition import UpperConfidenceBound
 from botorch.models.transforms.outcome import Standardize
 from botorch.models.transforms.input import Normalize
+# new for composite EI
 from botorch.models import SingleTaskGP
 from gpytorch.priors.torch_priors import GammaPrior
-import sys
-import gurobipy as gp
+
 from botorch.optim import optimize_acqf
 from matplotlib import pyplot as plt
-from matplotlib import cm
 import argparse
 import os
 warnings.simplefilter(action='ignore', category=RuntimeWarning)
 import logging
 import multiprocessing as mp
 logging.getLogger('pyomo.core').setLevel(logging.CRITICAL)
-from base_model.ref_paper_p_abstract import *
-from data_read.poolsize import *
-from data_read.product_quality_lower import *
-from data_read.product_quality_upper import *
-from data_read.pool_connections import *
+from base_model.ref_paper_p_abstract_generalized import *
+from data_read.Lee_GPool import *
 import random
 
 
@@ -44,100 +41,103 @@ def recreate_instances(n_exp, sigma, filename, theta_seed, test_ind = False):
     """
     # read the synthetic data file
     df = pd.read_excel(filename)
-    data_0 = ast.literal_eval(df["Instance Data Dictionary"][0])
+
     if test_ind:
         df = df[::-1].reset_index(drop=True)
 
-    x_history_dict = {i: [] for i in list(ast.literal_eval(df["Decision Variables"][0])['x'].keys())}
-    y_history_dict = {i: [] for i in list(ast.literal_eval(df["Decision Variables"][0])['y'].keys())}
-    z_history_dict = {i: [] for i in list(ast.literal_eval(df["Decision Variables"][0])['z'].keys())}
-    p_history_dict = {i: [] for i in list(ast.literal_eval(df["Decision Variables"][0])['p'].keys())}
-    
-    # extract true theta values
-    theta_UB_vector = ast.literal_eval(df["Upper True Theta Demand"][0])
-    theta_UB_vector = list(theta_UB_vector.values())
-    theta_LB_vector = ast.literal_eval(df["Lower True Theta Demand"][0])
-    theta_LB_vector = list(theta_LB_vector.values())
-    # extract actual demand
-    actual_demand = [list(ast.literal_eval(df["Demand"][i]).values()) for i in range(len(df))]
-
     # recreate experimental conditions (models)
     model_lst = []
-    actual_demand_tmp = []
-    count_exp = 0
-    n = 0
+    count_opt = 0
+    exp_id = count_opt
 
-    xRef_dict = {i: [] for i in list(x_history_dict.keys())}
-    yRef_dict = {i: [] for i in list(y_history_dict.keys())}
-    pRef_dict = {i: [] for i in list(p_history_dict.keys())}
-
+    x_ref_dict = {(i,l): [] for (i,l) in Tx}
+    y_ref_dict = {(l+1,j+1): [] for l in range(L) for j in range(J)}
+    z_ref_dict = {(i,l): [] for (i,l) in Tz}
+    rinit_ref_dict = {i+1: [] for i in range(I)}
+    rpool_ref_dict = {l+1: [] for l in range(L)}
+    C_ref_dict = {(i+1,k+1): [] for i in range(I) for k in range(K)}
+    C_max = []
+    C_min = []
     np.random.seed(theta_seed)
-
-    while count_exp < n_exp:
-        data = ast.literal_eval(df["Instance Data Dictionary"][n])
+    while count_opt < n_exp:
+        data = ast.literal_eval(df["Instance Data Dictionary"][exp_id])
+        theta_vector = [data[None]['Pu'][j+1,1] for j in range(J)]
         instance_p = model.create_instance(data)
         opt = pyo.SolverFactory('gurobi')#, solver_io="python")
         opt.options['NonConvex'] = 2
-        opt.options['timelimit'] = 10
+        opt.options['Heuristics'] = 0.5
         opt.options["LogToConsole"]= 0
         opt.options["OutputFlag"]= 0
         opt.options['MIPGap'] = 0
-
+        opt.options['PoolGap'] = 0
         solver_res = opt.solve(instance_p, tee = False)#,keepfiles = True)
-        ind_uniq = False
-       
-       
-        if str(solver_res.solver.termination_condition) == 'optimal':
 
-            actual_demand_tmp.append(actual_demand[n])
-            count_exp += 1
 
-            # set reference (ground-true) values of x, y, z, p 
-            # set xRef
-            count = 0
-            for (i,l) in list(instance_p.Tx):
-                instance_p.xRef[i, l] = pyo.value(instance_p.x[i, l])+np.random.normal(0, sigma)
-                xRef_dict[i,l].append(pyo.value(instance_p.x[i, l]))
+        # set reference (ground-true) values of x, y, z, p 
+        # set xRef
+        count = 0
+        for (i,l) in list(instance_p.Tx):
+            instance_p.xRef[i, l] = pyo.value(instance_p.x[i, l])+np.random.normal(0, sigma)
+            count+=1
+
+        # set yRef
+        count = 0
+
+        for l in list(instance_p.l):
+            for j in list(instance_p.j):
+                instance_p.yRef[l,j] = pyo.value(instance_p.y[l,j])+np.random.normal(0, sigma)
                 count+=1
 
+        # set zRef
+        count = 0
+        for (i,j) in list(instance_p.Tz):
+            instance_p.zRef[i,j] = pyo.value(instance_p.z[i, j])+np.random.normal(0, sigma)
+            count+=1
 
-            # set yRef
-            count = 0
-            for l in list(instance_p.l):
-                for j in list(instance_p.j):
-                    instance_p.yRef[l,j] = pyo.value(instance_p.y[l,j])+np.random.normal(0, sigma)
-                    yRef_dict[l,j].append(pyo.value(instance_p.y[l,j]))
-                    count+=1
-            # set pRef
-            count = 0
-            for l in list(instance_p.l):
+
+        # set pRef
+        count = 0
+        for l in list(instance_p.l):
+            for k in list(instance_p.k):
+                instance_p.pRef[l,k] = pyo.value(instance_p.p[l,k])+np.random.normal(0, sigma)
+                count+=1
+        # get bounds on C
+        if str(solver_res.solver.termination_condition) == 'optimal':            
+            C_tmp = []
+            for i in list(instance_p.i):
                 for k in list(instance_p.k):
-                    instance_p.pRef[l,k] = pyo.value(instance_p.p[l,k])+np.random.normal(0, sigma)
-                    pRef_dict[l,k].append(pyo.value(instance_p.p[l,k]))
-                    count+=1
-            
-            # store the model
+                    C_ref_dict[i,k].append(pyo.value(instance_p.C[i,k]))
+                C_tmp.append(pyo.value(instance_p.C[i,1]))
+            C_max.append(max(C_tmp))
+            C_min.append(min(C_tmp))                
             model_lst.append(instance_p)
-        n += 1
-    actual_demand=actual_demand_tmp
+            count_opt +=1
+        exp_id+=1
 
-    return model_lst, actual_demand, theta_UB_vector, theta_LB_vector
+    theta_UB = [min(C_max) for _ in range(J)]  
+    theta_LB = [max(C_min) for _ in range(J)]  
 
-def simulator(m, actual_demand, theta_UB_vector, theta_LB_vector, selected_ind, n_exp, exp_id = 1, solvername = "ipopt", tee = False, mp_ind = False):
+    return model_lst, theta_vector, theta_UB, theta_LB
+
+def simulator(m, theta_vector, n_exp, exp_id = 1, solvername = "ipopt", tee = False, mp_ind = False):
     """
     Solve FOPs with the randomized contextual inputs
     """
-    for i, name in enumerate(selected_ind):
-        # actual demand is always 1 here, so demand = theta
-        m.Du[name+1]=theta_UB_vector[i]*actual_demand[exp_id][name] 
-        
-    opt = pyo.SolverFactory('gurobi')
+    # update demand with current theta values
+    for l, name in enumerate(list(m.j)):
+        m.Pu[l+1,1] = theta_vector[l] 
+        m.Pl[l+1,1] = theta_vector[l] 
+        m.Pu[l+1,2] = 1.0-theta_vector[l] 
+        m.Pl[l+1,2] = 1.0-theta_vector[l] 
+    opt = pyo.SolverFactory('gurobi')#, solver_io="python")
     opt.options['NonConvex'] = 2
     opt.options["LogToConsole"]= 0
     opt.options["OutputFlag"]= 0
-    opt.options['MIPGap'] = 0.0#1
+    opt.options['MIPGap'] = 0.0
+    opt.options['PoolGap'] = 0.0
+
     if mp_ind:
-        opt.options['Threads'] = 4
+        opt.options['Threads'] = 8
 
     # indicator of global optimality
     opt_ind = False
@@ -151,6 +151,7 @@ def simulator(m, actual_demand, theta_UB_vector, theta_LB_vector, selected_ind, 
             opt_ind = True
         # suboptimal
         elif str(solver_res.solver.termination_condition) == 'maxTimeLimit':
+            # print("maxTimeLimit ",pyo.value(m.OBJ))
             loss = pyo.value(m.loss)
         # infeasible
         else:
@@ -163,20 +164,20 @@ def simulator(m, actual_demand, theta_UB_vector, theta_LB_vector, selected_ind, 
 
     return loss, opt_ind
 
-def f_max(model_lst, x, actual_demand,n_dim, selected_ind, solvername = 'gurobi', tee = False, mp_ind=False, n_p = 8):
+def f_max(model_lst, x,n_dim, solvername = 'gurobi', tee = False, mp_ind=False, n_p = 8):
     """
     Function to compute loss
     """    
-    # update theta vector
-    theta_Ref_LB = [0]*n_dim
-    theta_Ref_UB = x
 
     n_exp = int(len(model_lst))
     
     if mp_ind:
         # solve FOPs in parallel
+        m_lst = []
+        for i, model in enumerate(model_lst):
+                m_lst.append(model.clone())
         p = mp.Pool(n_p)
-        results = p.starmap_async(simulator, [(m, actual_demand, theta_Ref_UB, theta_Ref_LB, selected_ind,n_exp, id, solvername, tee, mp_ind) for id, m in enumerate(model_lst)])
+        results = p.starmap_async(simulator, [(m,x, n_exp, id, solvername, tee, mp_ind) for id, m in enumerate(model_lst)])
         p.close()
         p.join()
         loss = [r[0] for r in results.get()]
@@ -189,17 +190,18 @@ def f_max(model_lst, x, actual_demand,n_dim, selected_ind, solvername = 'gurobi'
         loss = []
         opt_ind = []
         for id, m in enumerate(model_lst):
-            loss_tmp, opt_ind_tmp = simulator(m, actual_demand, theta_Ref_UB, theta_Ref_LB, selected_ind,n_exp, id, solvername, tee, mp_ind)
+            loss_tmp, opt_ind_tmp = simulator(m,x, n_exp, id, solvername, tee)
             loss.append(loss_tmp)
             opt_ind.append(opt_ind_tmp)
-
     if all(opt_ind):
         # check if all FOPs are solve to global optimality
         opt_ind = True
     else:
         opt_ind = False
-    loss = np.mean(loss)  
+    loss = np.mean(loss)
+    
     return np.array(-loss), opt_ind
+
 
 def train_model(X, Y, nu=1.5, noiseless_obs=True):
     """
@@ -243,7 +245,7 @@ def train_model(X, Y, nu=1.5, noiseless_obs=True):
 
 
 # need ability to optimize aquisition function
-def optimize_one_step_acq(model, train_X, train_Y, xL, xU, nx, beta = 0.5, random_seed = 10):
+def optimize_one_step_acq(model, train_X, train_Y, xL, xU, nx, beta = 0.5, random_seed = 0):
     """
     Optimize the acquisition function to query candidate solutions
     """
@@ -266,20 +268,20 @@ def optimize_one_step_acq(model, train_X, train_Y, xL, xU, nx, beta = 0.5, rando
     x_next = new_point_analytic[0,:]
     return x_next, acq_value
 
-def optimize_acq_and_get_observation(model, model_lst, train_X, train_Y, actual_demand, xL, xU, n_dim, selected_ind, solvername, beta = 0.5, mp_ind = False, n_p = 8,random_seed = 10):
+def optimize_acq_and_get_observation(model, model_lst, train_X, train_Y, xL, xU, n_dim, solvername, beta = 0.5, mp_ind = False, n_p = 8, random_seed = 0):
     """
     Wrapper to optimize acquisition funciton and perform loss calculation at the new query points
     """
     # run optimization to get next candidate design point
     x_next, acq_value = optimize_one_step_acq(model, train_X, train_Y, xL, xU, n_dim, beta = 0.5, random_seed = random_seed)
     # evaluate the true function at the next design
-    y_next, opt_ind = f_max(model_lst, x_next.tolist(), actual_demand, n_dim, selected_ind, solvername = solvername, mp_ind = mp_ind, n_p = n_p)
+    y_next, opt_ind = f_max(model_lst, x_next.tolist(), n_dim, solvername = solvername, mp_ind = mp_ind, n_p = n_p)
     return x_next, y_next, acq_value, opt_ind
 
 def main():
     """
     To executre the code, input the following lines in the command window.
-    python BO4IO_Std_Pooling.py -nexp 50 -niter 100 -case_study haverly1 -ntrial 5 -sigma 0.05 -theta_seed 1 -n_data_seed 1 -mp 1 -n_p 25 -ntheta 2
+    python BO4IO_Gen_Pooling.py -nexp 50 -niter 200 -case_study Lee -ntrial 5 -sigma 0.05 -theta_seed 1 -n_data_seed 1 -mp 1 -n_p 10
     Input arguements:
     -nexp number of exps
     -ntrial number of trials
@@ -289,7 +291,7 @@ def main():
     -case_study case study name
     """
     # Collect input for model parameter assignment.
-    parser = argparse.ArgumentParser(description='BO4IO algorithm for standard pooling problems')
+    parser = argparse.ArgumentParser(description='BO4IO algorithm for generalized pooling problems')
     optional = parser._action_groups.pop()  # creates group of optional arguments
     required = parser.add_argument_group('required arguments')  # creates group of required arguments
     # required input
@@ -309,7 +311,6 @@ def main():
     optional.add_argument('-theta_seed', '--theta_seed', help='theta seed number', type=int, default = 1)
     optional.add_argument('-mp', '--mp', help='multiprocessing (1) or not (0)', type=int, default = 1)
     optional.add_argument('-n_p', '--n_p', help='number of processors', type=int, default = 32)
-    optional.add_argument('-ntheta', '--ntheta', help='number of theta parameters to be estimated', type=int, default = 2)
 
 
     parser._action_groups.append(optional)  # add optional values to the parser
@@ -328,7 +329,6 @@ def main():
     nu = args.nu
     n_data_seed = args.n_data_seed
     theta_seed = args.theta_seed
-    ntheta = args.ntheta
     # indicator for parallelization
     if args.mp == 1:
         mp_ind = True
@@ -350,28 +350,8 @@ def main():
     except:
         pass
 
-    try:
-        os.mkdir("BO_results/case_study=%s/ntheta=%s"%(case_study, ntheta))
-    except:
-        pass
-
-
-
-    # dimension of output streams
-    n_dim = J[case_study]
-    if n_dim < ntheta:
-        print("The dimension of estimated theta (%s) is larger than the original problem (%s). Reduce the dimension."%(ntheta,n_dim))
-        sys.exit()
-
-    # generate the selected indexes of the theta vector
-    theta_ind_lst = list(range(n_dim))
-    random.seed(theta_seed)
-    selected_ind = random.sample(theta_ind_lst,ntheta)
-
-
     # store information for PL at specified iterations
     PL_iter_lst = [10,25,50,100,150,200]
-
 
     for data_seed in range(theta_seed,theta_seed+n_data_seed):#range(1,n_data_seed+1):
         theta_seed = data_seed
@@ -380,46 +360,36 @@ def main():
         print(f"sigma = {sigma}")
         print(f"n_exp = {n_exp}")
         print(f"seed = {theta_seed}")
-        print(f"ntheta = {ntheta}")
         print(f"N_iter = {N_iter}")
         print(f"N_init = {N_init}")
         print(f"N_trial = {N_trial}")
         
-        # create base path
-        Base_path = 'BO_results/case_study=%s/ntheta=%s/case_study=%s_BO_N_trial=' %(case_study,ntheta,case_study) + \
+        Base_path = 'BO_results/case_study=%s/case_study=%s_BO_N_trial=' %(case_study,case_study) + \
           str(N_trial) + '_N_init=' + str(N_init) + '_N_iter=' +\
-              str(N_iter) + '_n_exp=' + str(n_exp) + '_ntheta=' + \
-                str(ntheta) + '_sigma=' + str(sigma) + \
+              str(N_iter) + '_n_exp=' + str(n_exp) + \
+               '_sigma=' + str(sigma) + \
                     '_nu=%s_beta=%s_theta_seed=%s_data_seed=%s' %(nu,beta,theta_seed,data_seed)
         try:
             os.mkdir(Base_path)
         except:
             pass
         # synthetic data filename
-        filename = 'synthetic_data/%s_550_experiments_theta_seed=%s_data_seed=%s.xlsx'%(case_study,theta_seed, data_seed)
+        filename = 'synthetic_data/Lee_550_experiments_data_seed=%s_theta_seed=%s.xlsx'%(data_seed,theta_seed)
 
         # recreate instances from synthetic data
         # training instances
-        st = time.time()
-        model_lst, actual_demand, theta_UB_vector, theta_LB_vector = recreate_instances(n_exp, sigma, filename, theta_seed)
-        et = time.time()
-        print(f"The CPU time needed to recreate the instances was {et-st}")
-        
+        model_lst, theta_vector,theta_UB, theta_LB = recreate_instances(n_exp, sigma, filename,data_seed)
+        print("True theta vector = ", theta_vector)
         # testing instances
-        model_lst_test, actual_demand_test, theta_UB_vector, theta_LB_vector = recreate_instances(n_test, sigma, filename, theta_seed, test_ind=True)
-        theta_true_full = theta_UB_vector #+ theta_UB_vector
+        model_lst_test, theta_vector,theta_UB_test, theta_LB_test = recreate_instances(n_test, sigma, filename,data_seed, test_ind=True)
+        theta_true = theta_vector
 
-
-        
-
-
-        print("True theta vector = ", theta_true_full)
-        theta_true = [theta_true_full[i] for i in selected_ind]
-        print("True theta vector (selected) = ", theta_true)
+        # dimension of output streams
+        n_dim = J
 
         # define ground true training loss
         st = time.time()
-        neg_loss_true, _ = f_max(model_lst, theta_true, actual_demand, ntheta, selected_ind, mp_ind = mp_ind, n_p = n_p)
+        neg_loss_true, _ = f_max(model_lst, theta_true, n_dim, mp_ind = mp_ind, n_p = n_p)
         et = time.time()
         total_time = et - st
         print(f"The negative training loss value given the true parameters is {neg_loss_true}")
@@ -427,17 +397,17 @@ def main():
 
         # define ground true testing loss
         st = time.time()
-        neg_loss_true_test, _ = f_max(model_lst_test, theta_true, actual_demand_test, ntheta, selected_ind, mp_ind = mp_ind, n_p = np_test)
+        neg_loss_true_test, _ = f_max(model_lst_test, theta_true, n_dim, mp_ind = mp_ind, n_p = n_p)
         et = time.time()
         total_time = et - st
         print(f"The negative testing loss value given the true parameters is {neg_loss_true_test}")
         print(f"The CPU time needed to evaluate the testing loss was {total_time}")
 
-        # Define bounds of the estimated parameters (theta)
-        nx = ntheta
-        xL = numpy.array([0.5]*int(nx))# + [0.7]*int(nx/2))
-        xU = numpy.array([1.0]*int(nx))# + [1.0]*int(nx/2))
-            
+        # # # Define bounds of the estimated parameters (theta)
+        nx = n_dim
+        xL = numpy.array([0.2]*int(nx))
+        xU = numpy.array([0.6]*int(nx))
+    
         # BO loop
         # set value of hyperparameter in kernel
         nu_val = 1.5
@@ -460,6 +430,7 @@ def main():
 
             # fix random seed
             numpy.random.seed(seed=trial)
+            random.seed(trial+100)
             botorch.utils.sampling.manual_seed(seed=trial)
 
             # create empty arrays
@@ -478,20 +449,13 @@ def main():
             # loop over initial random samples
             init_count = 0
             while init_count < N_init:
-                # intial samples
-                x_next = [random.uniform(xL.tolist()[ii],xU.tolist()[ii]) for ii in range(ntheta)]
+
+                x_next = [random.uniform(0.2,0.6) for _ in range(n_dim)] #+ [random.uniform(0.7,1.0) for _ in range(n_dim)]
                 x_next = np.array(x_next)
-                st_FOP = time.time()
-                y_next, opt_ind = f_max(model_lst, x_next.tolist(), actual_demand, ntheta, selected_ind, solvername = solvername, mp_ind = mp_ind, n_p = n_p)
-                end_FOP = time.time()
-                # print(f"FOPs solved in {end_FOP-st_FOP} sec")
+                y_next, opt_ind = f_max(model_lst, x_next.tolist(), n_dim, solvername = solvername, mp_ind = mp_ind, n_p = n_p)
                 if opt_ind:
                     init_count += 1
-                    st_FOP = time.time()
-                    y_test_next,_ = f_max(model_lst_test, x_next.tolist(), actual_demand_test, ntheta, selected_ind, solvername = solvername, mp_ind = mp_ind, n_p = np_test)
-                    end_FOP = time.time()
-                    # print(f"Test set {_} solved in {end_FOP-st_FOP}")
-
+                    y_test_next, _ = f_max(model_lst_test, x_next.tolist(), n_dim, solvername = solvername, mp_ind = mp_ind, n_p = n_p)
                     x_history = numpy.append(x_history, x_next.reshape((1,-1)), axis=0)
                     y_history = numpy.append(y_history, y_next.reshape((1,-1)), axis=0)
                     y_test_history = numpy.append(y_test_history, y_test_next.reshape((1,-1)), axis=0)
@@ -521,13 +485,12 @@ def main():
                     print(e)
                     print("Model training failed, so retained previous model")
 
-                
                 # optimize acqusition and get next observation
-                x_next, y_next, acq_value, opt_ind = optimize_acq_and_get_observation(model, model_lst, train_X, train_Y, actual_demand, xL, xU, ntheta, selected_ind, solvername, beta = beta, mp_ind = mp_ind, n_p = n_p, random_seed = N_iter)
+                x_next, y_next, acq_value, opt_ind = optimize_acq_and_get_observation(model, model_lst, train_X, train_Y, xL, xU, n_dim, solvername, beta = beta, mp_ind = mp_ind, n_p = n_p, random_seed = i)
 
                 if opt_ind:
                     # calculate the test loss
-                    y_test_next,_ = f_max(model_lst_test, x_next.tolist(), actual_demand_test, ntheta, selected_ind, solvername = solvername, mp_ind = mp_ind, n_p = np_test)
+                    y_test_next,_ = f_max(model_lst_test, x_next.tolist(), n_dim, solvername = solvername, mp_ind = mp_ind, n_p = np_test)
 
                     # append to data history
                     x_history = numpy.append(x_history, x_next.numpy().reshape((1,-1)), axis=0)
@@ -550,7 +513,6 @@ def main():
                     print("============= Traditional BO ================")
                     print('Trial: %d|Iteration: %d|c loss: %.4f|Max training value so far: %.4f|Max testing value so far: %.4f|Acquistion value %.4f'%(trial+1, i+1, theta_l2_norm, best_observed_tmp, best_observed_test_tmp, acq_value))
                     print(f"y next {y_next.item()}", "theta next ",[ '%.3f' % elem for elem in x_next], "theta best ",[ '%.3f' % elem for elem in theta_est_best], "true theta ", theta_true)
-
                     if i+1 in PL_iter_lst:
                         # plot final prediction results, if possible
                         train_X = torch.tensor(x_history)
@@ -628,7 +590,6 @@ def main():
         df["neg_loss_true_test"] = neg_loss_true_test
         path = Base_path + "/BO_results.csv"
         df.to_csv(path)
-
 
         def confidence_interval(y):
             return 1.96 * y.std(axis=0) / numpy.sqrt(N_trial)

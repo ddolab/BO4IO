@@ -1,4 +1,5 @@
 from BO4IO_Std_Pooling import *
+import seaborn as sns
 
 def main():
     """
@@ -99,6 +100,9 @@ def main():
             print(f"The CPU time needed to evaluate the loss was {total_time}")
 
             nx = ntheta
+            x_gap = 0.1
+            xL = numpy.array([i-x_gap/2 for i in theta_true])
+            xU = numpy.array([i+x_gap/2 for i in theta_true])
 
             # initialize SI range
             

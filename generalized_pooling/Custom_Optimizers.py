@@ -1,6 +1,10 @@
+"""
+"""
+
 from __future__ import annotations
 
 import warnings
+from functools import partial
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple, Type, Union
 
 import numpy as np
