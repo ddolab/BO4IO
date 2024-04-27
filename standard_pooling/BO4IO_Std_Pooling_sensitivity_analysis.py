@@ -4,7 +4,7 @@ import seaborn as sns
 def main():
     """
     Perform sensitivity analysis on the specified case study
-    python BO4IO_Std_Pooling_sensitivity_analysis.py -case_study haverly1  -ntheta 2 -nexp 50 -nsteps 500 -mp 1 -n_p 10 -theta_seed 1 -n_data_seed 1 -sigma 0.05
+    python BO4IO_Std_Pooling_sensitivity_analysis.py -case_study haverly1  -ntheta 2 -nexp 50 -mp 1 -n_p 10 -theta_seed 1 -n_data_seed 1 -sigma 0.05
     """
     # Collect input for model parameter assignment.
     parser = argparse.ArgumentParser(description='Perform sensitivity analysis on the specified case study')
@@ -13,7 +13,7 @@ def main():
     # required input
     # optional input
     optional.add_argument('-nexp', '--n_exp', help='number of exps', type=int, default = 25)
-    optional.add_argument('-nsteps', '--N_steps', help='number of testing steps in sensitivity analysis', type=int, default = 5)
+    optional.add_argument('-nsteps', '--N_steps', help='number of testing steps in sensitivity analysis', type=int, default = 500)
     optional.add_argument('-ntrial', '--N_trial', help='number of trials', type=int, default = 5)
     optional.add_argument('-niter', '--N_iter', help='number of BO iterations', type=int, default = 45)
     optional.add_argument('-ninit', '--N_init', help='number of initial samples', type=int, default = 5)
