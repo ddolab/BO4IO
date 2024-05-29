@@ -1,8 +1,16 @@
 # BO4IO
-This repository contains codes and data for the BO4IO paper. The following are the instructions to run the codes.
+This repository contains codes and data for the BO4IO paper ([here](https://arxiv.org/abs/2405.17875)). The following are the instructions for running the codes.
 
 ## Citation
-Coming soon
+  ```bibtex
+  @misc{lu2024bo4io,
+      title={BO4IO: A Bayesian optimization approach to inverse optimization with uncertainty quantification}, 
+      author={Yen-An Lu and Wei-Shou Hu and Joel A. Paulson and Qi Zhang},
+      year={2024},
+      eprint={2405.17875},
+      archivePrefix={arXiv},
+      primaryClass={math.OC}}
+```
 
 
 ## Requirements
